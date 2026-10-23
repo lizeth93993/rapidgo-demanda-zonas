@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+.env
+
+# Datos generados por el pipeline (solo se versiona la estructura y los README)
+datalake/raw/**
+datalake/processed/**
+datalake/curated/**
+datalake/_checkpoints/**
+!datalake/**/.gitkeep
+!datalake/README.md
+
+# Spark / Airflow
+spark-warehouse/
+metastore_db/
+derby.log
+airflow/logs/
+airflow/*.db
+airflow/*.cfg
+
+# IDE / SO
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
