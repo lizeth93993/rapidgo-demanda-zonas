@@ -1,0 +1,40 @@
+digraph rapidgo {
+  graph [rankdir=LR, fontname="Helvetica", fontsize=20, labelloc=t, pad=0.4, nodesep=0.5, ranksep=0.7, bgcolor="white",
+         label=<<B>RapidGo · Variante 5: Demanda por zonas</B><BR/><FONT POINT-SIZE="13" COLOR="#555555">Equipo 2 · arquitectura v0.1.0-foundation</FONT>>];
+  node  [shape=box, style="rounded,filled", fontname="Helvetica", fontsize=12, color="#33333355", penwidth=1.2, margin="0.2,0.12"];
+  edge  [fontname="Helvetica", fontsize=10, color="#555555", fontcolor="#444444", penwidth=1.3];
+
+  producer [fillcolor="#FCE9C6", label=<<B>Producer</B><BR/><FONT POINT-SIZE="10">Simulador de pedidos<BR/>12 zonas de Bogotá<BR/>picos por zona / franja</FONT>>];
+
+  subgraph cluster_kafka {
+    label=<<B>Kafka (KRaft)</B>>; style="rounded,filled"; fillcolor="#FFF6E5"; color="#E8A33D"; fontname="Helvetica"; fontsize=13;
+    topic  [fillcolor="#F6B44A", label=<<B>rapidgo.demanda.pedidos.v1</B><BR/><FONT POINT-SIZE="10">key = zone_id · 3 particiones</FONT>>];
+    talert [fillcolor="#F6B44A", label=<<B>rapidgo.demanda.alertas.v1</B><BR/><FONT POINT-SIZE="10">1 partición</FONT>>];
+  }
+
+  spark [fillcolor="#C9D8EE", label=<<B>Spark Structured Streaming</B><BR/><FONT POINT-SIZE="10">parseo + validación de contrato<BR/>dedupe event_id · franja horaria<BR/>ventanas 1 / 5 / 15 min · watermark 2 min<BR/>KPIs + reglas de alerta</FONT>>];
+
+  subgraph cluster_lake {
+    label=<<B>Data Lake (Parquet)</B>>; style="rounded,filled"; fillcolor="#E6F4F2"; color="#13998A"; fontname="Helvetica"; fontsize=13;
+    raw  [fillcolor="#BFE5E0", label=<<B>raw</B><BR/><FONT POINT-SIZE="10">pedidos (+ inválidos)</FONT>>];
+    proc [fillcolor="#BFE5E0", label=<<B>processed</B><BR/><FONT POINT-SIZE="10">pedidos limpios<BR/>fecha / zone_id</FONT>>];
+    cur  [fillcolor="#BFE5E0", label=<<B>curated</B><BR/><FONT POINT-SIZE="10">kpi_demanda_minuto<BR/>kpi_zonas_calientes<BR/>kpi_demanda_franja · alertas</FONT>>];
+    raw -> proc -> cur [color="#13998A"];
+  }
+
+  airflow [fillcolor="#C8E3CF", label=<<B>Airflow</B><BR/><FONT POINT-SIZE="10">check fuentes → validar raw →<BR/>agregar franja → validar curated →<BR/>reporte diario</FONT>>];
+
+  out [fillcolor="#F7C9CF", label=<<B>Indicadores / Alertas</B><BR/><FONT POINT-SIZE="10">pedidos/min por zona · zonas calientes<BR/>demanda por franja<BR/>DEMANDA_ALTA · CAPACIDAD_INSUFICIENTE</FONT>>];
+
+  producer -> topic [label="JSON v1.0"];
+  topic -> spark [label="readStream"];
+  spark -> raw  [label="writeStream\n+ checkpoint"];
+  spark -> talert [label="alertas", style=dashed];
+  cur -> airflow [label="lee"];
+  airflow -> cur [label="escribe\nkpi_demanda_franja", style=dashed];
+  airflow -> out;
+  talert -> out [style=dashed];
+
+  ci [shape=note, fillcolor="#EEEEEE", fontsize=10, label="Transversal: Docker Compose · Git/GitHub · Kanban · GitHub Actions · Releases"];
+  { rank=sink; ci }
+}
