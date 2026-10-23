@@ -1,0 +1,23 @@
+# Catalogo de zonas de RapidGo (Bogota) para la variante 5 - Demanda por zonas.
+#
+# baseline_opm      : pedidos por minuto "normales" de la zona en hora pico (almuerzo/cena).
+#                     Valores INICIALES de simulacion; se recalibran en la Semana 2 con
+#                     el promedio real observado por Spark (candidato a ADR-002).
+# repartidores_base : repartidores activos tipicos en la zona en hora pico. Se dimensiona para
+#                     que en demanda normal la presion (pedidos 15 min / repartidores) sea ~0.7.
+# tier              : A = alta demanda, B = media, C = baja. El producer usa estos pesos
+#                     para generar trafico realista y picos.
+
+zonas:
+  - { zone_id: BOG-CHA, nombre: Chapinero,       tier: A, baseline_opm: 9.0, repartidores_base: 190 }
+  - { zone_id: BOG-USA, nombre: Usaquen,         tier: A, baseline_opm: 8.0, repartidores_base: 170 }
+  - { zone_id: BOG-SUB, nombre: Suba,            tier: A, baseline_opm: 7.5, repartidores_base: 160 }
+  - { zone_id: BOG-TEU, nombre: Teusaquillo,     tier: B, baseline_opm: 5.0, repartidores_base: 105 }
+  - { zone_id: BOG-ENG, nombre: Engativa,        tier: B, baseline_opm: 5.0, repartidores_base: 105 }
+  - { zone_id: BOG-KEN, nombre: Kennedy,         tier: B, baseline_opm: 5.5, repartidores_base: 115 }
+  - { zone_id: BOG-FON, nombre: Fontibon,        tier: B, baseline_opm: 4.0, repartidores_base: 85 }
+  - { zone_id: BOG-BUN, nombre: Barrios Unidos,  tier: B, baseline_opm: 3.5, repartidores_base: 75 }
+  - { zone_id: BOG-PAR, nombre: Puente Aranda,   tier: C, baseline_opm: 2.5, repartidores_base: 55 }
+  - { zone_id: BOG-BOS, nombre: Bosa,            tier: C, baseline_opm: 2.5, repartidores_base: 55 }
+  - { zone_id: BOG-CAN, nombre: La Candelaria,   tier: C, baseline_opm: 1.5, repartidores_base: 32 }
+  - { zone_id: BOG-CBO, nombre: Ciudad Bolivar,  tier: C, baseline_opm: 1.5, repartidores_base: 32 }
