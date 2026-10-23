@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RapidGo - Evento de pedido (Variante 5: Demanda por zonas)",
+  "description": "Un evento por cada cambio de estado de un pedido. Topic: rapidgo.demanda.pedidos.v1, key: zone_id.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "event_id",
+    "schema_version",
+    "team_id",
+    "order_id",
+    "zone_id",
+    "category",
+    "status",
+    "event_ts",
+    "active_couriers_in_zone"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Identificador unico del evento (UUID v4). Permite deduplicar en Spark."
+    },
+    "schema_version": {
+      "type": "string",
+      "const": "1.0",
+      "description": "Version del contrato. Un cambio incompatible crea el topic .v2."
+    },
+    "team_id": {
+      "type": "string",
+      "const": "equipo-02",
+      "description": "Identifica los eventos generados por este equipo."
+    },
+    "order_id": {
+      "type": "string",
+      "pattern": "^ORD-[0-9]{8}-[A-Z0-9]{6}$",
+      "description": "ORD-<fecha AAAAMMDD>-<6 caracteres>. Igual en todos los eventos del mismo pedido."
+    },
+    "zone_id": {
+      "type": "string",
+      "enum": ["BOG-CHA", "BOG-USA", "BOG-SUB", "BOG-TEU", "BOG-ENG", "BOG-KEN", "BOG-FON", "BOG-BUN", "BOG-PAR", "BOG-BOS", "BOG-CAN", "BOG-CBO"],
+      "description": "Zona de entrega. Es la key del mensaje en Kafka. Catalogo en config/zonas.yaml."
+    },
+    "category": {
+      "type": "string",
+      "enum": ["RESTAURANTE", "MERCADO", "FARMACIA", "LICORES", "MASCOTAS", "OTROS"]
+    },
+    "status": {
+      "type": "string",
+      "enum": ["CREATED", "ASSIGNED", "PICKED_UP", "DELIVERED", "CANCELLED"],
+      "description": "CREATED cuenta como demanda; ASSIGNED indica que un repartidor tomo el pedido."
+    },
+    "event_ts": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "Z$",
+      "description": "Momento en que ocurrio el cambio de estado, ISO-8601 en UTC. Spark usa este campo como event time; la franja se calcula en America/Bogota."
+    },
+    "active_couriers_in_zone": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Repartidores activos (conectados y disponibles u ocupados) en la zona al momento del evento, segun el sistema de despacho."
+    },
+    "channel": {
+      "type": "string",
+      "enum": ["APP", "WEB", "CALL_CENTER"],
+      "description": "Opcional. Canal por el que se creo el pedido."
+    }
+  }
+}
