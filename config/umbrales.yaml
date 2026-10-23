@@ -1,0 +1,45 @@
+# Umbrales iniciales de KPIs y alertas - Variante 5: Demanda por zonas.
+# Se leen desde Spark (Semana 2) y se prueban en tests/ (Semana 2-3).
+# Justificacion de cada valor: README.md, seccion "KPIs y reglas de alerta".
+# Cualquier cambio de umbral debe hacerse por PR y citar la ejecucion que lo motivo.
+
+zona_horaria: America/Bogota
+
+franjas:                     # hora local [inicio, fin)
+  MADRUGADA: [0, 6]
+  DESAYUNO:  [6, 11]
+  ALMUERZO:  [11, 15]
+  TARDE:     [15, 18]
+  CENA:      [18, 22]
+  NOCHE:     [22, 24]
+
+kpis:
+  pedidos_por_minuto:
+    ventana: "1 minute"          # tumbling
+    watermark: "2 minutes"       # tolera eventos que llegan hasta 2 min tarde
+  zona_caliente:
+    ventana: "5 minutes"
+    deslizamiento: "1 minute"
+    indice_calor_min: 1.5        # opm_ventana / baseline_opm de la zona
+    top_n: 3                     # ademas se reportan las 3 zonas con mayor opm
+  demanda_por_franja:
+    agregacion: "fecha, franja, zone_id"
+
+alertas:
+  DEMANDA_ALTA:
+    descripcion: "Pedidos creados en la zona muy por encima de su demanda normal"
+    ventana: "5 minutes"
+    deslizamiento: "1 minute"
+    metrica: "opm = pedidos CREATED en la ventana / 5"
+    warning:  { indice_calor: 1.5 }
+    critical: { indice_calor: 2.0 }
+    minimo_absoluto_opm: 3.0     # evita alertas en zonas de baja demanda por 2-3 pedidos sueltos
+
+  CAPACIDAD_INSUFICIENTE:
+    descripcion: "La demanda reciente supera lo que los repartidores activos pueden absorber"
+    ventana: "15 minutes"
+    deslizamiento: "5 minutes"
+    metrica: "presion = pedidos CREATED en la ventana / min(active_couriers_in_zone) en la ventana"
+    warning:  { presion: 1.0 }
+    critical: { presion: 1.5 }
+    sin_repartidores: critical   # active_couriers_in_zone == 0 con al menos 1 pedido => CRITICAL
