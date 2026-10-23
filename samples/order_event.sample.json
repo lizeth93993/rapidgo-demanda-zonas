@@ -1,0 +1,12 @@
+{
+  "event_id": "6f1c2a4e-8b3d-4c7a-9e21-5d0f3b8a7c14",
+  "schema_version": "1.0",
+  "team_id": "equipo-02",
+  "order_id": "ORD-20261022-K7M2QX",
+  "zone_id": "BOG-CHA",
+  "category": "RESTAURANTE",
+  "status": "CREATED",
+  "event_ts": "2026-10-22T17:31:05.412Z",
+  "active_couriers_in_zone": 184,
+  "channel": "APP"
+}
