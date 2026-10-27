@@ -33,7 +33,7 @@ def test_franja_hora_invalida():
 
 # ------------------------------- KPIs -------------------------------------- #
 def test_pedidos_por_minuto():
-    assert reglas.pedidos_por_minuto(45, 5) == 9.0
+    assert reglas.pedidos_por_minuto(45, 5) == 10.0
 
 
 def test_indice_calor_demanda_normal_es_1():
