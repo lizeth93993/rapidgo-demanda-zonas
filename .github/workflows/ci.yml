@@ -1,0 +1,36 @@
+name: CI RapidGo
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  validar:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Configurar Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+          cache: 'pip'
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+
+      - name: Validar sintaxis Python
+        run: python -m compileall -q producer spark tests scripts
+
+      - name: Validar YAML de configuracion
+        run: python -c "import yaml; [yaml.safe_load(open(f, encoding='utf-8')) for f in ('config/zonas.yaml', 'config/umbrales.yaml')]"
+
+      - name: Ejecutar pruebas
+        run: pytest -v
+
+      - name: Validar Docker Compose
+        run: docker compose config --quiet

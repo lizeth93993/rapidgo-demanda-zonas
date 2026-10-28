@@ -1,8 +1,11 @@
-# Semana 1: contrato, configuracion y pruebas
+# Contrato, configuracion y pruebas
 pytest>=8.3
 jsonschema>=4.23
 PyYAML>=6.0
 
-# Semana 2 (producer). confluent-kafka trae wheels para Python 3.13.
-# Configurar partitioner=murmur2_random (ver ADR-001).
+# Producer (Issue #7). Configurar partitioner=murmur2_random (ver ADR-001).
 confluent-kafka>=2.6
+
+# Spark NO se instala aqui: corre dentro del contenedor del servicio "spark"
+# (imagen apache/spark:3.5.6). Las reglas de spark/reglas.py son Python puro
+# y se prueban sin Spark.
