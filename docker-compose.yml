@@ -1,9 +1,9 @@
 # RapidGo - Variante 5: Demanda por zonas
-# docker-compose PRELIMINAR (Semana 1): Kafka en modo KRaft + creacion del topic + UI.
-# Semana 2 agrega producer y Spark; Semana 3 agrega Airflow (ver bloques comentados al final).
+# Semana 2: Kafka (KRaft) + topics + UI + producer. Spark llega en el Issue #8.
+# Semana 3 agrega Airflow (bloque comentado al final).
 #
-#   docker compose up -d
-#   docker compose logs kafka-init          # debe mostrar el topic con 3 particiones
+#   docker compose up -d --build
+#   docker compose logs -f producer          # mensajes confirmados por particion
 #   UI de Kafka: http://localhost:8080
 
 name: rapidgo-demanda
@@ -12,10 +12,14 @@ services:
   kafka:
     image: apache/kafka:3.9.1
     container_name: rapidgo-kafka
+    user: root                                 # permisos de escritura sobre el volumen kafka-data
+    volumes:
+      - kafka-data:/var/lib/kafka/data         # los mensajes sobreviven a "docker compose down"
     ports:
       - "9092:9092"           # acceso desde el host (producer local, pruebas)
     environment:
       KAFKA_NODE_ID: 1
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
       KAFKA_PROCESS_ROLES: broker,controller
       KAFKA_LISTENERS: INTERNAL://0.0.0.0:29092,EXTERNAL://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
       KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:29092,EXTERNAL://localhost:9092
@@ -64,8 +68,28 @@ services:
       KAFKA_CLUSTERS_0_NAME: rapidgo
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
 
-  # --- Semana 2 (pendiente, Issue #7 y #8) ---------------------------------
-  # producer:   build ./producer  -> publica en rapidgo.demanda.pedidos.v1 (bootstrap kafka:29092)
-  # spark:      Spark Structured Streaming con ./spark y ./datalake montados como volumenes
+  # --- Semana 2 -------------------------------------------------------------
+  producer:
+    build:
+      context: .
+      dockerfile: producer/Dockerfile
+    container_name: rapidgo-producer
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+    environment:
+      KAFKA_BOOTSTRAP: kafka:29092
+      VELOCIDAD: ${VELOCIDAD:-10}            # segundos simulados por segundo real
+      PICO_ZONA: ${PICO_ZONA:-}              # ej. PICO_ZONA=BOG-CHA docker compose up -d producer
+      PICO_FACTOR: ${PICO_FACTOR:-2.5}
+      REDUCIR_ZONA: ${REDUCIR_ZONA:-}        # ej. REDUCIR_ZONA=BOG-SUB
+      DURACION: ${DURACION:-0}               # 0 = sin limite
+    restart: "no"
+
+  # spark:    (Issue #8) Spark Structured Streaming
+
   # --- Semana 3 (pendiente, Issue #12) -------------------------------------
   # airflow:    webserver/scheduler con ./airflow/dags montado
+
+volumes:
+  kafka-data:
