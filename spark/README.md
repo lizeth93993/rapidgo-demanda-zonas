@@ -1,8 +1,16 @@
-# Spark Structured Streaming (Semana 2 - Issues #8 y #9)
+# Spark Structured Streaming (Issues #8 y #9)
 
-Plan de procesamiento:
-1. Leer `rapidgo.demanda.pedidos.v1` y parsear el JSON con el schema del contrato.
-2. Transformaciones: validacion de contrato (`is_valid`), conversion de `event_ts` a timestamp, deduplicacion por `event_id`, calculo de `hora_local` y `franja` (America/Bogota).
-3. Agregaciones por ventana con watermark de 2 min: pedidos por minuto por zona y ventanas deslizantes para las alertas.
-4. Reglas de alerta con los umbrales de `config/umbrales.yaml`.
-5. Escritura en Parquet en `datalake/` con checkpoint por query.
+`streaming_job.py` lee `rapidgo.demanda.pedidos.v1`, valida y transforma los eventos y escribe Parquet con checkpoint:
+
+| Query | Salida | Checkpoint |
+|---|---|---|
+| `raw_pedidos` | `datalake/raw/pedidos` (todo, incluso inválidos) | `_checkpoints/raw_pedidos` |
+| `processed_pedidos` | `datalake/processed/pedidos` (válidos, deduplicados, con franja) | `_checkpoints/processed_pedidos` |
+
+Transformaciones: parseo con el schema del contrato, validación (`is_valid`, `motivo_invalido`), `event_ts` a timestamp y hora de Bogotá, deduplicación por `event_id` y franja horaria. Las reglas compartidas están en `reglas.py`.
+
+Ventanas, KPIs y alertas: Issue #9.
+
+```bash
+docker compose logs -f spark      # [progreso] de cada query
+```

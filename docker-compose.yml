@@ -1,8 +1,9 @@
 # RapidGo - Variante 5: Demanda por zonas
-# Semana 2: Kafka (KRaft) + topics + UI + producer. Spark llega en el Issue #8.
+# Semana 2: Kafka (KRaft) + topics + UI + producer + Spark Structured Streaming.
 # Semana 3 agrega Airflow (bloque comentado al final).
 #
 #   docker compose up -d --build
+#   docker compose logs -f spark             # [progreso] y [ALERTA]
 #   docker compose logs -f producer          # mensajes confirmados por particion
 #   UI de Kafka: http://localhost:8080
 
@@ -86,10 +87,34 @@ services:
       DURACION: ${DURACION:-0}               # 0 = sin limite
     restart: "no"
 
-  # spark:    (Issue #8) Spark Structured Streaming
+  spark:
+    build: ./spark
+    container_name: rapidgo-spark
+    user: root                               # evita problemas de permisos al escribir en ./datalake
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+    environment:
+      KAFKA_BOOTSTRAP: kafka:29092
+    volumes:
+      - ./spark:/app/spark
+      - ./config:/app/config:ro
+      - ./datalake:/app/datalake
+      - ivy-cache:/tmp/.ivy2
+    command:
+      - /opt/spark/bin/spark-submit
+      - --packages
+      - org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.6
+      - --conf
+      - spark.jars.ivy=/tmp/.ivy2
+      - --driver-memory
+      - 2g
+      - /app/spark/streaming_job.py
+    restart: "no"
 
   # --- Semana 3 (pendiente, Issue #12) -------------------------------------
   # airflow:    webserver/scheduler con ./airflow/dags montado
 
 volumes:
   kafka-data:
+  ivy-cache:
