@@ -1,12 +1,15 @@
-"""Spark Structured Streaming - RapidGo Variante 5: Demanda por zonas (parte 1: Issue #8).
+"""Spark Structured Streaming - RapidGo Variante 5: Demanda por zonas.
 
-Lee rapidgo.demanda.pedidos.v1, valida y transforma los eventos y los escribe en
-el Data Lake (Parquet) con checkpoint por query.
+Lee rapidgo.demanda.pedidos.v1, valida y transforma los eventos, calcula KPIs por
+ventana de tiempo, evalua las alertas y escribe todo en el Data Lake (Parquet)
+con checkpoint por query.
 
 Queries (cada una con su checkpoint en datalake/_checkpoints/<nombre>):
-  1. raw_pedidos          -> datalake/raw/pedidos         (todo, incluso invalidos)
-  2. processed_pedidos    -> datalake/processed/pedidos   (validos, deduplicados, con franja)
-Las ventanas, KPIs y alertas llegan en el Issue #9.
+  1. raw_pedidos          -> datalake/raw/pedidos                 (todo, incluso invalidos)
+  2. processed_pedidos    -> datalake/processed/pedidos           (validos, deduplicados, con franja)
+  3. kpi_demanda_minuto   -> datalake/curated/kpi_demanda_minuto  (ventana tumbling 1 min)
+  4. zonas_calientes      -> datalake/curated/kpi_zonas_calientes + alertas DEMANDA_ALTA (5 min / 1 min)
+  5. capacidad            -> datalake/curated/alertas CAPACIDAD_INSUFICIENTE (15 min / 5 min)
 
 Transformaciones: (1) parseo JSON con el schema del contrato, (2) validacion de
 negocio -> is_valid / motivo_invalido, (3) event_ts -> timestamp y hora local de
@@ -24,6 +27,8 @@ import argparse
 import os
 import sys
 import time
+import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 from pyspark.sql import DataFrame, SparkSession
@@ -48,6 +53,37 @@ ESQUEMA_EVENTO = T.StructType([
     T.StructField("event_ts", T.StringType()),
     T.StructField("active_couriers_in_zone", T.IntegerType()),
     T.StructField("channel", T.StringType()),
+])
+
+ESQUEMA_ALERTA = T.StructType([
+    T.StructField("alert_id", T.StringType()),
+    T.StructField("tipo", T.StringType()),
+    T.StructField("severidad", T.StringType()),
+    T.StructField("zone_id", T.StringType()),
+    T.StructField("window_start", T.TimestampType()),
+    T.StructField("window_end", T.TimestampType()),
+    T.StructField("valor", T.DoubleType()),
+    T.StructField("umbral", T.DoubleType()),
+    T.StructField("pedidos", T.LongType()),
+    T.StructField("repartidores_min", T.LongType()),
+    T.StructField("detalle", T.StringType()),
+    T.StructField("generated_ts", T.TimestampType()),
+    T.StructField("team_id", T.StringType()),
+    T.StructField("fecha", T.DateType()),
+])
+
+ESQUEMA_CALIENTES = T.StructType([
+    T.StructField("window_start", T.TimestampType()),
+    T.StructField("window_end", T.TimestampType()),
+    T.StructField("zone_id", T.StringType()),
+    T.StructField("pedidos", T.LongType()),
+    T.StructField("opm", T.DoubleType()),
+    T.StructField("baseline_opm", T.DoubleType()),
+    T.StructField("indice_calor", T.DoubleType()),
+    T.StructField("es_caliente", T.BooleanType()),
+    T.StructField("ranking_opm", T.IntegerType()),
+    T.StructField("team_id", T.StringType()),
+    T.StructField("fecha", T.DateType()),
 ])
 
 
@@ -146,14 +182,109 @@ def validos(df: DataFrame, watermark: str) -> DataFrame:
 
 
 # --------------------------------------------------------------------------- #
+# Escritura de lotes de alertas (foreachBatch)
+# --------------------------------------------------------------------------- #
+class Escritor:
+    def __init__(self, spark: SparkSession, args, umbrales: dict, zonas: dict):
+        self.spark = spark
+        self.args = args
+        self.umbrales = umbrales
+        self.zonas = zonas
+        self.dl = Path(args.datalake)
+
+    def _fecha(self, ts: datetime):
+        return (ts.replace(tzinfo=timezone.utc).astimezone(_tz_bogota())).date()
+
+    def _alerta(self, tipo, severidad, fila, valor, umbral, detalle) -> tuple:
+        clave = f"{tipo}|{fila['zone_id']}|{fila['window_start'].isoformat()}"
+        return (
+            str(uuid.uuid5(uuid.NAMESPACE_URL, clave)), tipo, severidad, fila["zone_id"],
+            fila["window_start"], fila["window_end"], float(valor), float(umbral),
+            int(fila["pedidos"]), int(fila["repartidores_min"]) if fila.get("repartidores_min") is not None else None,
+            detalle, datetime.now(timezone.utc).replace(tzinfo=None), reglas.TEAM_ID, self._fecha(fila["window_end"]),
+        )
+
+    def _guardar_alertas(self, filas: list[tuple], batch_id: int) -> None:
+        if not filas:
+            return
+        df = self.spark.createDataFrame(filas, ESQUEMA_ALERTA)
+        df.write.mode("append").partitionBy("fecha").parquet(str(self.dl / "curated" / "alertas"))
+        for f in filas:
+            print(f"[ALERTA] batch={batch_id} {f[1]} {f[2]} zona={f[3]} ventana={f[4]:%H:%M}-{f[5]:%H:%M} "
+                  f"valor={f[6]:.2f} umbral={f[7]:.2f} pedidos={f[8]} repartidores_min={f[9]}", flush=True)
+        if self.args.fuente == "kafka":
+            try:
+                (df.select(F.col("zone_id").alias("key"),
+                           F.to_json(F.struct(*[c for c in df.columns])).alias("value"))
+                   .write.format("kafka")
+                   .option("kafka.bootstrap.servers", self.args.bootstrap)
+                   .option("topic", self.args.topic_alertas).save())
+            except Exception as exc:  # el Parquet ya quedo escrito; no detener el pipeline
+                print(f"[WARN] no se pudo publicar alertas en Kafka: {exc}", flush=True)
+
+    def zonas_calientes(self, batch_df: DataFrame, batch_id: int) -> None:
+        minutos_v = reglas.minutos(self.umbrales["alertas"]["DEMANDA_ALTA"]["ventana"])
+        filas = [r.asDict() for r in batch_df.collect()]
+        if not filas:
+            return
+        kpis, alertas = [], []
+        # ranking de opm por ventana para el "top N" de zonas calientes
+        por_ventana: dict = {}
+        for f in filas:
+            f["opm"] = reglas.pedidos_por_minuto(f["pedidos"], minutos_v)
+            f["baseline_opm"] = float(self.zonas[f["zone_id"]]["baseline_opm"])
+            f["indice_calor"] = reglas.indice_calor(f["opm"], f["baseline_opm"])
+            por_ventana.setdefault(f["window_start"], []).append(f)
+        for grupo in por_ventana.values():
+            for pos, f in enumerate(sorted(grupo, key=lambda x: -x["opm"]), start=1):
+                f["ranking_opm"] = pos
+        regla = self.umbrales["alertas"]["DEMANDA_ALTA"]
+        for f in filas:
+            caliente = reglas.es_zona_caliente(f["indice_calor"], self.umbrales)
+            kpis.append((f["window_start"], f["window_end"], f["zone_id"], int(f["pedidos"]), f["opm"],
+                         f["baseline_opm"], f["indice_calor"], caliente, f["ranking_opm"], reglas.TEAM_ID,
+                         self._fecha(f["window_end"])))
+            sev = reglas.severidad_demanda(f["opm"], f["indice_calor"], self.umbrales)
+            if sev:
+                umbral = regla["critical" if sev == reglas.CRITICAL else "warning"]["indice_calor"]
+                f["repartidores_min"] = None
+                alertas.append(self._alerta("DEMANDA_ALTA", sev, f, f["indice_calor"], umbral,
+                                            f"{f['opm']:.1f} pedidos/min vs {f['baseline_opm']:.1f} normales"))
+        (self.spark.createDataFrame(kpis, ESQUEMA_CALIENTES).write.mode("append").partitionBy("fecha")
+             .parquet(str(self.dl / "curated" / "kpi_zonas_calientes")))
+        self._guardar_alertas(alertas, batch_id)
+
+    def capacidad(self, batch_df: DataFrame, batch_id: int) -> None:
+        regla = self.umbrales["alertas"]["CAPACIDAD_INSUFICIENTE"]
+        alertas = []
+        for r in batch_df.collect():
+            f = r.asDict()
+            sev = reglas.severidad_capacidad(int(f["pedidos"]), int(f["repartidores_min"]), self.umbrales)
+            if sev:
+                p = reglas.presion(int(f["pedidos"]), int(f["repartidores_min"]))
+                umbral = regla["critical" if sev == reglas.CRITICAL else "warning"]["presion"]
+                valor = p if p != float("inf") else 9999.0
+                alertas.append(self._alerta("CAPACIDAD_INSUFICIENTE", sev, f, valor, umbral,
+                                            f"{f['pedidos']} pedidos para {f['repartidores_min']} repartidores"))
+        self._guardar_alertas(alertas, batch_id)
+
+
+def _tz_bogota():
+    from datetime import timedelta
+    return timezone(timedelta(hours=-5))   # Bogota no usa horario de verano
+
+
+# --------------------------------------------------------------------------- #
 # Queries
 # --------------------------------------------------------------------------- #
 def iniciar_queries(spark: SparkSession, args) -> list:
     umbrales = reglas.cargar_umbrales(Path(args.config) / "umbrales.yaml")
+    zonas = reglas.cargar_zonas(Path(args.config) / "zonas.yaml")
     dl = Path(args.datalake)
     chk = dl / "_checkpoints"
     wm = umbrales["kpis"]["pedidos_por_minuto"]["watermark"]
     trig = {"processingTime": args.trigger}
+    escritor = Escritor(spark, args, umbrales, zonas)
 
     base = transformar(leer_fuente(spark, args))
     queries = []
@@ -181,6 +312,43 @@ def iniciar_queries(spark: SparkSession, args) -> list:
                    .option("checkpointLocation", str(chk / "processed_pedidos"))
                    .partitionBy("fecha", "zone_id").trigger(**trig).outputMode("append").start())
 
+    creados = validos(base, wm).filter(F.col("status") == "CREATED")
+
+    # 3. KPI pedidos por minuto (ventana tumbling)
+    v1 = umbrales["kpis"]["pedidos_por_minuto"]["ventana"]
+    por_minuto = (creados.groupBy(F.window("event_time", v1).alias("w"), "zone_id")
+                  .agg(F.count("*").alias("pedidos"))
+                  .select(F.col("w.start").alias("window_start"), F.col("w.end").alias("window_end"),
+                          "zone_id", "pedidos",
+                          (F.col("pedidos") / reglas.minutos(v1)).alias("opm"),
+                          F.lit(reglas.TEAM_ID).alias("team_id"),
+                          F.to_date(F.from_utc_timestamp(F.col("w.end"), ZONA_HORARIA)).alias("fecha")))
+    queries.append(por_minuto.writeStream.queryName("kpi_demanda_minuto").format("parquet")
+                   .option("path", str(dl / "curated" / "kpi_demanda_minuto"))
+                   .option("checkpointLocation", str(chk / "kpi_demanda_minuto"))
+                   .partitionBy("fecha").trigger(**trig).outputMode("append").start())
+
+    # 4. Zonas calientes + DEMANDA_ALTA (ventana deslizante)
+    rd = umbrales["alertas"]["DEMANDA_ALTA"]
+    calientes = (creados.groupBy(F.window("event_time", rd["ventana"], rd["deslizamiento"]).alias("w"), "zone_id")
+                 .agg(F.count("*").alias("pedidos"))
+                 .select(F.col("w.start").alias("window_start"), F.col("w.end").alias("window_end"),
+                         "zone_id", "pedidos"))
+    queries.append(calientes.writeStream.queryName("zonas_calientes")
+                   .option("checkpointLocation", str(chk / "zonas_calientes"))
+                   .foreachBatch(escritor.zonas_calientes).trigger(**trig).outputMode("append").start())
+
+    # 5. CAPACIDAD_INSUFICIENTE (ventana deslizante larga, todos los estados para ver repartidores)
+    rc = umbrales["alertas"]["CAPACIDAD_INSUFICIENTE"]
+    capacidad = (validos(base, wm)
+                 .groupBy(F.window("event_time", rc["ventana"], rc["deslizamiento"]).alias("w"), "zone_id")
+                 .agg(F.sum(F.when(F.col("status") == "CREATED", 1).otherwise(0)).cast("long").alias("pedidos"),
+                      F.min("active_couriers_in_zone").cast("long").alias("repartidores_min"))
+                 .select(F.col("w.start").alias("window_start"), F.col("w.end").alias("window_end"),
+                         "zone_id", "pedidos", "repartidores_min"))
+    queries.append(capacidad.writeStream.queryName("capacidad")
+                   .option("checkpointLocation", str(chk / "capacidad"))
+                   .foreachBatch(escritor.capacidad).trigger(**trig).outputMode("append").start())
     return queries
 
 
