@@ -6,11 +6,13 @@ Pipeline Big Data end-to-end (Kafka → Spark Structured Streaming → Data Lake
 
 | Integrante | GitHub | Rol Semana 2 | Rol Semana 3 | Rol Semana 4 |
 |---|---|---|---|---|
-| Kevin Peña | @tarantis-udec | Kafka / Producer | Airflow | Integración |
-| Carlos Guzmán | @anotheruserbtww | Spark / Data Lake | Tests / CI | Release |
-| Lizeth Jiménez | @lizeth939993 | Tests / CI | Integración | Calidad / README |
+| [Santiago Peña] | @tarantis-udec | Kafka / Producer | Airflow | Integración |
+| [Carlos Guzman] | @anotheruserbtww | Spark / Data Lake | Tests / CI | Release |
+| [Lizeth Jimenez] | @lizeth93993 | Tests / CI | Integración | Calidad / README |
 
-**Estado:** `v0.1.0-foundation` — diseño, contrato y organización.
+**Estado:** `v0.2.0-streaming` — pipeline Kafka → Spark → Data Lake funcionando, con CI en cada PR.
+
+[![CI RapidGo](https://github.com/lizeth93993/rapidgo-demanda-zonas/actions/workflows/ci.yml/badge.svg)](https://github.com/lizeth93993/rapidgo-demanda-zonas/actions/workflows/ci.yml)
 
 ## Problema de negocio
 
@@ -104,47 +106,83 @@ Umbrales en [`config/umbrales.yaml`](config/umbrales.yaml); demanda normal por z
 
 Todos son **supuestos de simulación**. En la Semana 2 se compararán con los valores observados en la ejecución y cualquier ajuste se hará por PR con su evidencia.
 
-## Ejecutar localmente (Semana 1)
+## Ejecutar el pipeline
 
-Prerrequisitos: Docker Desktop (o Docker Engine + Compose v2), Python 3.13, Git.
+Prerrequisitos: Docker Desktop (con al menos 4 GB de memoria asignada), Python 3.13 y Git.
 
 ```bash
-git clone <url-del-repo> && cd <repo>
-docker compose up -d                       # Kafka + creación de topics + UI
-docker compose logs kafka-init             # debe mostrar PartitionCount: 3
-# UI de Kafka: http://localhost:8080
+git clone https://github.com/lizeth93993/rapidgo-demanda-zonas.git && cd rapidgo-demanda-zonas
 
-python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-pytest -v                                  # valida contrato y hash de particiones
-python scripts/simular_particiones.py      # evidencia del ADR-001
+# 1. Levantar todo: Kafka, topics, Kafka UI, producer y Spark
+docker compose up -d --build
+#    La primera vez tarda: descarga las imágenes y el conector de Kafka para Spark.
+
+# 2. Ver que funciona
+docker compose logs -f producer      # [resumen] con mensajes confirmados por partición
+docker compose logs -f spark         # [progreso] por query y [ALERTA] cuando se dispara una regla
+#    Kafka UI: http://localhost:8080 (topic rapidgo.demanda.pedidos.v1, 3 particiones)
+
+# 3. Provocar un pico en Chapinero y pocos repartidores en Suba
+docker compose stop producer
+PICO_ZONA=BOG-CHA REDUCIR_ZONA=BOG-SUB docker compose up -d producer
+#    El pico empieza en el minuto simulado 5 (30 s reales) y dura 20 (2 min reales).
+
+# 4. Ver la evidencia del Data Lake
+docker compose exec spark /opt/spark/bin/spark-submit /app/spark/resumen.py
+
+# 5. Apagar
+docker compose down
 ```
+
+| Variable del producer | Default | Qué hace |
+|---|---|---|
+| `VELOCIDAD` | 10 | Segundos simulados por segundo real. |
+| `PICO_ZONA` / `PICO_FACTOR` | – / 2.5 | Zona con pico de demanda y multiplicador. |
+| `REDUCIR_ZONA` | – | Zona que pierde la mitad de sus repartidores durante el pico. |
+| `DURACION` | 0 | Segundos reales a ejecutar (0 = sin límite). |
+
+`docker compose down` conserva los mensajes de Kafka (volumen `kafka-data`) y el Data Lake con sus checkpoints, así que al volver a levantar todo continúa donde iba. El producer retoma su reloj simulado desde el último evento del topic.
+
+Para empezar de cero: `docker compose down -v` (borra los volúmenes) y luego borrar el contenido de `datalake/raw`, `datalake/processed`, `datalake/curated` y `datalake/_checkpoints` (sin borrar los `.gitkeep`). Hay que hacer las dos cosas juntas: si se borra solo una, los checkpoints de Spark y Kafka quedan desincronizados.
+
+## Pruebas y CI
+
+```bash
+python -m venv .venv && source .venv/Scripts/activate   # Mac/Linux: source .venv/bin/activate
+pip install -r requirements.txt
+pytest -v                                               # contrato, particiones, reglas y producer
+python producer/producer.py --dry-run --max-eventos 20  # producer sin Kafka
+```
+
+GitHub Actions (`.github/workflows/ci.yml`) corre en cada push a `main`, en cada Pull Request y manualmente (**Actions → CI RapidGo → Run workflow**): compileall, validación de YAML, `pytest`, dry-run del producer y `docker compose config`.
 
 ## Estructura
 
 ```
-.github/workflows/   CI (Semana 2)
+.github/workflows/   ci.yml (GitHub Actions)
 airflow/dags/        DAG de control (Semana 3)
 config/              zonas.yaml, umbrales.yaml
 datalake/            raw / processed / curated (+ README)
 docs/                arquitectura.png, checkpoints/, decisions/ (ADR)
-producer/            simulador de pedidos (Semana 2)
+producer/            simulador de pedidos (generador.py + producer.py + Dockerfile)
 samples/             schema y eventos de ejemplo
 scripts/             simulación de particiones, creación de issues
-spark/               streaming (Semana 2)
-tests/               pruebas de contrato y particiones
+spark/               streaming_job.py, reglas.py, resumen.py, Dockerfile
+tests/               pruebas de contrato, particiones, reglas y producer
 ```
 
 ## Documentación
 
 - [ADR-001 — Topic, key y particiones](docs/decisions/ADR-001-topic-key-particiones.md)
+- [ADR-002 — Ajuste tras observar la ejecución](docs/decisions/ADR-002-ajuste-tras-ejecucion.md)
 - [Checkpoint Semana 1](docs/checkpoints/semana1.md)
+- [Checkpoint Semana 2](docs/checkpoints/semana2.md)
 
 ## Releases
 
 | Versión | Contenido | Estado |
 |---|---|---|
 | v0.1.0-foundation | Arquitectura, contrato, KPIs, alertas, ADR-001, Kanban | ✅ |
-| v0.2.0-streaming | Producer, Kafka, Spark, Data Lake, tests, CI | ⏳ |
+| v0.2.0-streaming | Producer, Kafka, Spark, Data Lake, tests, CI | ✅ |
 | v0.3.0-orchestration | Airflow, calidad, fallo controlado, CI ampliado | ⏳ |
 | v1.0.0 | Quality gate, README final, video | ⏳ |
