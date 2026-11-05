@@ -43,3 +43,11 @@ alertas:
     warning:  { presion: 1.0 }
     critical: { presion: 1.5 }
     sin_repartidores: critical   # active_couriers_in_zone == 0 con al menos 1 pedido => CRITICAL
+
+# Controles de calidad del DAG de Airflow (Semana 3, Issue #12).
+# Las ventanas son de tiempo REAL de ingesta (ingest_ts que escribe Spark), no simulado.
+calidad:
+  max_minutos_sin_datos: 5     # si el ultimo evento raw tiene mas de 5 min, la fuente esta detenida
+  ventana_validacion_min: 5    # se validan los eventos ingeridos en los ultimos 5 min
+  min_eventos_raw: 100         # menos eventos en esa ventana = fuente caida o casi sin trafico
+  max_tasa_invalidos: 0.05     # mas de 5 % de invalidos = falla de calidad (normal: ~1 %)
