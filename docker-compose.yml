@@ -1,11 +1,10 @@
 # RapidGo - Variante 5: Demanda por zonas
-# Semana 2: Kafka (KRaft) + topics + UI + producer + Spark Structured Streaming.
-# Semana 3 agrega Airflow (bloque comentado al final).
+# Kafka (KRaft) + topics + UI + producer + Spark Structured Streaming + Airflow.
 #
 #   docker compose up -d --build
 #   docker compose logs -f spark             # [progreso] y [ALERTA]
 #   docker compose logs -f producer          # mensajes confirmados por particion
-#   UI de Kafka: http://localhost:8080
+#   UI de Kafka: http://localhost:8080 | UI de Airflow: http://localhost:8081
 
 name: rapidgo-demanda
 
@@ -85,6 +84,7 @@ services:
       PICO_FACTOR: ${PICO_FACTOR:-2.5}
       REDUCIR_ZONA: ${REDUCIR_ZONA:-}        # ej. REDUCIR_ZONA=BOG-SUB
       DURACION: ${DURACION:-0}               # 0 = sin limite
+      TASA_INVALIDOS: ${TASA_INVALIDOS:-0.01} # fraccion de eventos invalidos (fallo controlado: 0.3)
     restart: "no"
 
   spark:
@@ -112,8 +112,23 @@ services:
       - /app/spark/streaming_job.py
     restart: "no"
 
-  # --- Semana 3 (pendiente, Issue #12) -------------------------------------
-  # airflow:    webserver/scheduler con ./airflow/dags montado
+  # --- Semana 3 -------------------------------------------------------------
+  airflow:
+    build: ./airflow
+    container_name: rapidgo-airflow
+    command: standalone                      # api-server + scheduler + dag-processor en un contenedor
+    ports:
+      - "8081:8080"                          # UI de Airflow en http://localhost:8081 (8080 es Kafka UI)
+    environment:
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_ALL_ADMINS: "true"   # sin login: solo para uso local
+      RAPIDGO_DATALAKE: /opt/airflow/datalake
+      RAPIDGO_CONFIG: /opt/airflow/config
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./datalake:/opt/airflow/datalake
+      - ./config:/opt/airflow/config:ro
+    restart: "no"
 
 volumes:
   kafka-data:

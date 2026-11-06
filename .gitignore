@@ -11,6 +11,7 @@ datalake/raw/**
 datalake/processed/**
 datalake/curated/**
 datalake/_checkpoints/**
+datalake/reports/**
 !datalake/**/.gitkeep
 !datalake/README.md
 
