@@ -8,11 +8,12 @@ Almacenamiento local en Parquet (montado como volumen en Spark desde la Semana 2
 | Processed | `processed/pedidos/` | Eventos validos, tipados, deduplicados por `event_id`, con `event_ts` como timestamp, `hora_local` y `franja`. | `fecha`, `zone_id` | Spark streaming |
 | Curated | `curated/kpi_demanda_minuto/` | Pedidos por minuto por zona (ventana tumbling 1 min). | `fecha` | Spark streaming |
 | Curated | `curated/kpi_zonas_calientes/` | Indice de calor por zona (ventana 5 min / 1 min). | `fecha` | Spark streaming |
-| Curated | `curated/kpi_demanda_franja/` | Pedidos por fecha, franja y zona. | `fecha` | Airflow (agregacion diaria) |
+| Curated | `curated/kpi_demanda_franja/` | Pedidos creados, cancelados y tasa de cancelación por fecha, franja y zona. Se reescribe en cada corrida (idempotente). | `fecha` | Airflow (`agregar_demanda_franja`) |
 | Curated | `curated/alertas/` | Alertas `DEMANDA_ALTA` y `CAPACIDAD_INSUFICIENTE` con severidad. | `fecha` | Spark streaming |
+| Reportes | `reports/` | `reporte_<fecha>.md` y `ultimo_reporte.md`: calidad, demanda y alertas. | - | Airflow (`generar_reporte`) |
 | Control | `_checkpoints/<query>/` | Checkpoints de Spark Structured Streaming (offsets y estado). | - | Spark |
 
 Reglas:
 - Raw nunca se modifica; si una regla cambia, processed y curated se pueden reconstruir desde raw.
 - Toda tabla incluye `team_id` para identificar los datos del equipo.
-- Airflow (Semana 3) valida raw y curated antes de generar el reporte.
+- Airflow valida raw (ventana de los últimos 5 min) y curated antes de generar el reporte; si algo falla, no se genera.
