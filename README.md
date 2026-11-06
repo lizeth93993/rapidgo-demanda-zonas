@@ -6,11 +6,11 @@ Pipeline Big Data end-to-end (Kafka → Spark Structured Streaming → Data Lake
 
 | Integrante | GitHub | Rol Semana 2 | Rol Semana 3 | Rol Semana 4 |
 |---|---|---|---|---|
-| [Santiago Peña] | @tarantis-udec | Kafka / Producer | Airflow | Integración |
-| [Carlos Guzman] | @anotheruserbtww | Spark / Data Lake | Tests / CI | Release |
-| [Lizeth Jimenez] | @lizeth93993 | Tests / CI | Integración | Calidad / README |
+| Santiago Peña | @tarantis-udec | Kafka / Producer | Airflow | Integración |
+| Carlos Guzman | @anotheruserbtww | Spark / Data Lake | Tests / CI | Release |
+| Lizeth Jimenez | @lizeth93993 | Tests / CI | Integración | Calidad / README |
 
-**Estado:** `v0.2.0-streaming` — pipeline Kafka → Spark → Data Lake funcionando, con CI en cada PR.
+**Estado:** `v0.3.0-orchestration` — pipeline Kafka → Spark → Data Lake con control de calidad y reportes orquestados por Airflow, y CI que también valida el DAG.
 
 [![CI RapidGo](https://github.com/lizeth93993/rapidgo-demanda-zonas/actions/workflows/ci.yml/badge.svg)](https://github.com/lizeth93993/rapidgo-demanda-zonas/actions/workflows/ci.yml)
 
@@ -30,7 +30,7 @@ En horas de almuerzo y cena, o por eventos locales (lluvia, partidos, conciertos
 | Kafka (KRaft) | Transporta eventos; key `zone_id`, 3 particiones ([ADR-001](docs/decisions/ADR-001-topic-key-particiones.md)) |
 | Spark Structured Streaming | Valida, limpia, calcula franja, agrega por ventanas y evalúa alertas |
 | Data Lake (Parquet) | Capas raw → processed → curated ([detalle](datalake/README.md)) |
-| Airflow | Control batch: calidad → agregación por franja → reporte |
+| Airflow 3.1 | DAG horario: verifica fuentes, valida calidad, calcula demanda por franja y genera el reporte ([detalle](airflow/README.md)) |
 | Docker Compose | Levanta todo el entorno local |
 | GitHub (Issues, Kanban, PR, Actions, Releases) | Trazabilidad y CI desde la Semana 2 |
 
@@ -108,12 +108,12 @@ Todos son **supuestos de simulación**. En la Semana 2 se compararán con los va
 
 ## Ejecutar el pipeline
 
-Prerrequisitos: Docker Desktop (con al menos 4 GB de memoria asignada), Python 3.13 y Git.
+Prerrequisitos: Docker Desktop (con al menos 6 GB de memoria asignada), Python 3.13 y Git.
 
 ```bash
 git clone https://github.com/lizeth93993/rapidgo-demanda-zonas.git && cd rapidgo-demanda-zonas
 
-# 1. Levantar todo: Kafka, topics, Kafka UI, producer y Spark
+# 1. Levantar todo: Kafka, topics, Kafka UI, producer, Spark y Airflow
 docker compose up -d --build
 #    La primera vez tarda: descarga las imágenes y el conector de Kafka para Spark.
 
@@ -145,22 +145,38 @@ docker compose down
 
 Para empezar de cero: `docker compose down -v` (borra los volúmenes) y luego borrar el contenido de `datalake/raw`, `datalake/processed`, `datalake/curated` y `datalake/_checkpoints` (sin borrar los `.gitkeep`). Hay que hacer las dos cosas juntas: si se borra solo una, los checkpoints de Spark y Kafka quedan desincronizados.
 
+## Airflow: control de calidad y reporte
+
+```bash
+docker compose up -d --build airflow     # si no estaba arriba con el resto
+```
+
+1. Abrir **http://localhost:8081** (sin usuario ni contraseña; solo para uso local).
+2. **Dags** → `rapidgo_control_demanda` → activar el interruptor. Al activarlo corre una vez; después corre cada hora.
+3. Para correrlo a mano: botón **Trigger** (▶). Cada tarea muestra su log al hacer clic en su cuadro.
+4. El reporte queda en `datalake/reports/ultimo_reporte.md`, y el KPI de demanda por franja en `datalake/curated/kpi_demanda_franja`.
+
+El DAG tiene 6 tareas (`verificar_fuentes → validar_raw → agregar_demanda_franja / resumen_alertas → validar_curated → generar_reporte`), 2 reintentos cada 30 s y pasa métricas por XCom. La estrategia de recuperación está en el [ADR-003](docs/decisions/ADR-003-orquestacion-y-recuperacion.md), y cómo provocar un fallo controlado, en [airflow/README.md](airflow/README.md).
+
 ## Pruebas y CI
 
 ```bash
 python -m venv .venv && source .venv/Scripts/activate   # Mac/Linux: source .venv/bin/activate
 pip install -r requirements.txt
-pytest -v                                               # contrato, particiones, reglas y producer
+pytest -v                                               # contrato, particiones, reglas, producer y calidad
 python producer/producer.py --dry-run --max-eventos 20  # producer sin Kafka
 ```
 
-GitHub Actions (`.github/workflows/ci.yml`) corre en cada push a `main`, en cada Pull Request y manualmente (**Actions → CI RapidGo → Run workflow**): compileall, validación de YAML, `pytest`, dry-run del producer y `docker compose config`.
+GitHub Actions (`.github/workflows/ci.yml`) corre en cada push a `main`, en cada Pull Request y manualmente (**Actions → CI RapidGo → Run workflow**), con dos jobs:
+
+- **validar**: compileall, validación de YAML, `pytest` y `docker compose config`.
+- **Validar DAG de Airflow**: instala Airflow 3.1.8 e importa el DAG (`tests/test_dag.py`: sin errores, al menos 5 tareas, reintentos y dependencias), más las pruebas de calidad.
 
 ## Estructura
 
 ```
 .github/workflows/   ci.yml (GitHub Actions)
-airflow/dags/        DAG de control (Semana 3)
+airflow/             Dockerfile, README y dags/ (DAG rapidgo_control_demanda + reglas de calidad)
 config/              zonas.yaml, umbrales.yaml
 datalake/            raw / processed / curated (+ README)
 docs/                arquitectura.png, checkpoints/, decisions/ (ADR)
@@ -168,7 +184,7 @@ producer/            simulador de pedidos (generador.py + producer.py + Dockerfi
 samples/             schema y eventos de ejemplo
 scripts/             simulación de particiones, creación de issues
 spark/               streaming_job.py, reglas.py, resumen.py, Dockerfile
-tests/               pruebas de contrato, particiones, reglas y producer
+tests/               pruebas de contrato, particiones, reglas, producer, calidad y DAG
 ```
 
 ## Documentación
@@ -176,7 +192,9 @@ tests/               pruebas de contrato, particiones, reglas y producer
 - [ADR-001 — Topic, key y particiones](docs/decisions/ADR-001-topic-key-particiones.md)
 - [ADR-002 — Ajuste tras observar la ejecución](docs/decisions/ADR-002-ajuste-tras-ejecucion.md)
 - [Checkpoint Semana 1](docs/checkpoints/semana1.md)
+- [ADR-003 — Orquestación y recuperación ante fallos](docs/decisions/ADR-003-orquestacion-y-recuperacion.md)
 - [Checkpoint Semana 2](docs/checkpoints/semana2.md)
+- [Checkpoint Semana 3](docs/checkpoints/semana3.md)
 
 ## Releases
 
@@ -184,5 +202,5 @@ tests/               pruebas de contrato, particiones, reglas y producer
 |---|---|---|
 | v0.1.0-foundation | Arquitectura, contrato, KPIs, alertas, ADR-001, Kanban | ✅ |
 | v0.2.0-streaming | Producer, Kafka, Spark, Data Lake, tests, CI | ✅ |
-| v0.3.0-orchestration | Airflow, calidad, fallo controlado, CI ampliado | ⏳ |
+| v0.3.0-orchestration | Airflow, calidad, fallo controlado, CI ampliado | ✅ |
 | v1.0.0 | Quality gate, README final, video | ⏳ |
