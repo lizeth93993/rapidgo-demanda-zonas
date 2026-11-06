@@ -3,9 +3,15 @@ pytest>=8.3
 jsonschema>=4.23
 PyYAML>=6.0
 
+# Reglas de calidad del DAG de Airflow (Issue #12): leen el Data Lake en Parquet
+pandas>=2.2
+pyarrow>=17
+
 # Producer (Issue #7). Configurar partitioner=murmur2_random (ver ADR-001).
 confluent-kafka>=2.6
 
-# Spark NO se instala aqui: corre dentro del contenedor del servicio "spark"
+# Airflow NO se instala aqui (es pesado): corre en el contenedor "airflow" y en el job
+# "validar-dag" del CI, que importa el DAG con apache-airflow 3.1.8.
+# Spark tampoco se instala aqui: corre dentro del contenedor del servicio "spark"
 # (imagen apache/spark:3.5.6). Las reglas de spark/reglas.py son Python puro
 # y se prueban sin Spark.

@@ -24,7 +24,7 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Validar sintaxis Python
-        run: python -m compileall -q producer spark tests scripts
+        run: python -m compileall -q producer spark airflow tests scripts
 
       - name: Validar YAML de configuracion
         run: python -c "import yaml; [yaml.safe_load(open(f, encoding='utf-8')) for f in ('config/zonas.yaml', 'config/umbrales.yaml')]"
@@ -34,3 +34,32 @@ jobs:
 
       - name: Validar Docker Compose
         run: docker compose config --quiet
+
+  validar-dag:
+    name: Validar DAG de Airflow
+    runs-on: ubuntu-latest
+    env:
+      AIRFLOW_VERSION: '3.1.8'
+      PYTHON_VERSION: '3.12'
+      AIRFLOW_HOME: /tmp/airflow
+      AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Configurar Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Instalar Airflow (con el archivo de restricciones oficial)
+        run: |
+          pip install "apache-airflow==${AIRFLOW_VERSION}" pandas pyarrow pyyaml pytest \
+            --constraint "https://raw.githubusercontent.com/apache/airflow/constraints-${AIRFLOW_VERSION}/constraints-${PYTHON_VERSION}.txt"
+
+      - name: Importar el DAG y revisar su estructura
+        run: pytest tests/test_dag.py -v
+
+      - name: Pruebas de las reglas de calidad del DAG
+        run: pytest tests/test_calidad.py -v
