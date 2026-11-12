@@ -8,8 +8,8 @@ Queries (cada una con su checkpoint en datalake/_checkpoints/<nombre>):
   1. raw_pedidos          -> datalake/raw/pedidos                 (todo, incluso invalidos)
   2. processed_pedidos    -> datalake/processed/pedidos           (validos, deduplicados, con franja)
   3. kpi_demanda_minuto   -> datalake/curated/kpi_demanda_minuto  (ventana tumbling 1 min)
-  4. zonas_calientes      -> datalake/curated/kpi_zonas_calientes + alertas DEMANDA_ALTA (5 min / 1 min)
-  5. capacidad            -> datalake/curated/alertas CAPACIDAD_INSUFICIENTE (15 min / 5 min)
+  4. zonas_calientes      -> datalake/curated/kpi_zonas_calientes + curated/alertas/tipo=DEMANDA_ALTA (5 min / 1 min)
+  5. capacidad            -> datalake/curated/alertas/tipo=CAPACIDAD_INSUFICIENTE (15 min / 5 min)
 
 Transformaciones: (1) parseo JSON con el schema del contrato, (2) validacion de
 negocio -> is_valid / motivo_invalido, (3) event_ts -> timestamp y hora local de
@@ -204,11 +204,17 @@ class Escritor:
             detalle, datetime.now(timezone.utc).replace(tzinfo=None), reglas.TEAM_ID, self._fecha(fila["window_end"]),
         )
 
-    def _guardar_alertas(self, filas: list[tuple], batch_id: int) -> None:
+    def _guardar_alertas(self, filas: list[tuple], batch_id: int, tipo: str) -> None:
         if not filas:
             return
         df = self.spark.createDataFrame(filas, ESQUEMA_ALERTA)
-        df.write.mode("append").partitionBy("fecha").parquet(str(self.dl / "curated" / "alertas"))
+        # Cada query escribe en SU propia subcarpeta curated/alertas/tipo=<TIPO>/ (Issue #15).
+        # Antes las queries zonas_calientes y capacidad escribian a la vez en curated/alertas: al
+        # terminar, cada escritura borra la carpeta _temporary de esa ruta, y la otra fallaba con
+        # FileNotFoundException (hallazgo del fallo controlado, ADR-003). Al leer curated/alertas,
+        # "tipo" vuelve como columna de particion, igual que "fecha".
+        destino = self.dl / "curated" / "alertas" / f"tipo={tipo}"
+        df.drop("tipo").write.mode("append").partitionBy("fecha").parquet(str(destino))
         for f in filas:
             print(f"[ALERTA] batch={batch_id} {f[1]} {f[2]} zona={f[3]} ventana={f[4]:%H:%M}-{f[5]:%H:%M} "
                   f"valor={f[6]:.2f} umbral={f[7]:.2f} pedidos={f[8]} repartidores_min={f[9]}", flush=True)
@@ -252,7 +258,7 @@ class Escritor:
                                             f"{f['opm']:.1f} pedidos/min vs {f['baseline_opm']:.1f} normales"))
         (self.spark.createDataFrame(kpis, ESQUEMA_CALIENTES).write.mode("append").partitionBy("fecha")
              .parquet(str(self.dl / "curated" / "kpi_zonas_calientes")))
-        self._guardar_alertas(alertas, batch_id)
+        self._guardar_alertas(alertas, batch_id, "DEMANDA_ALTA")
 
     def capacidad(self, batch_df: DataFrame, batch_id: int) -> None:
         regla = self.umbrales["alertas"]["CAPACIDAD_INSUFICIENTE"]
@@ -266,7 +272,7 @@ class Escritor:
                 valor = p if p != float("inf") else 9999.0
                 alertas.append(self._alerta("CAPACIDAD_INSUFICIENTE", sev, f, valor, umbral,
                                             f"{f['pedidos']} pedidos para {f['repartidores_min']} repartidores"))
-        self._guardar_alertas(alertas, batch_id)
+        self._guardar_alertas(alertas, batch_id, "CAPACIDAD_INSUFICIENTE")
 
 
 def _tz_bogota():

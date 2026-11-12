@@ -9,7 +9,7 @@ Almacenamiento local en Parquet (montado como volumen en Spark desde la Semana 2
 | Curated | `curated/kpi_demanda_minuto/` | Pedidos por minuto por zona (ventana tumbling 1 min). | `fecha` | Spark streaming |
 | Curated | `curated/kpi_zonas_calientes/` | Indice de calor por zona (ventana 5 min / 1 min). | `fecha` | Spark streaming |
 | Curated | `curated/kpi_demanda_franja/` | Pedidos creados, cancelados y tasa de cancelación por fecha, franja y zona. Se reescribe en cada corrida (idempotente). | `fecha` | Airflow (`agregar_demanda_franja`) |
-| Curated | `curated/alertas/` | Alertas `DEMANDA_ALTA` y `CAPACIDAD_INSUFICIENTE` con severidad. | `fecha` | Spark streaming |
+| Curated | `curated/alertas/` | Alertas `DEMANDA_ALTA` y `CAPACIDAD_INSUFICIENTE` con severidad. Cada query escribe en su subcarpeta `tipo=<TIPO>/` para no pisarse (Issue #15); al leer la tabla, `tipo` vuelve como columna. | `tipo`, `fecha` | Spark streaming |
 | Reportes | `reports/` | `reporte_<fecha>.md` y `ultimo_reporte.md`: calidad, demanda y alertas. | - | Airflow (`generar_reporte`) |
 | Control | `_checkpoints/<query>/` | Checkpoints de Spark Structured Streaming (offsets y estado). | - | Spark |
 

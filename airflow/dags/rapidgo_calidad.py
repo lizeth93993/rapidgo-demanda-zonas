@@ -60,7 +60,10 @@ def leer_parquet(ruta: Path, columnas: Optional[list[str]] = None) -> pd.DataFra
                          partitioning=ds.partitioning(flavor="hive"), partition_base_dir=str(ruta))
     nombres = set(dataset.schema.names)
     cols = [c for c in columnas if c in nombres] if columnas else None
-    return dataset.to_table(columns=cols).to_pandas()
+    df = dataset.to_table(columns=cols).to_pandas()
+    for col in df.select_dtypes(include="category").columns:   # columnas de particion -> texto
+        df[col] = df[col].astype(str)
+    return df
 
 
 def _a_texto(valor) -> Optional[str]:
