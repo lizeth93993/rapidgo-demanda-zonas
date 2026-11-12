@@ -110,7 +110,7 @@ services:
       - --driver-memory
       - 2g
       - /app/spark/streaming_job.py
-    restart: "no"
+    restart: on-failure                      # si Spark se cae, Docker lo reinicia y sigue desde el checkpoint (ADR-003)
 
   # --- Semana 3 -------------------------------------------------------------
   airflow:
