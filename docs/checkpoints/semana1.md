@@ -26,9 +26,10 @@ Riesgo secundario: los umbrales son supuestos de simulacion (presion normal ~0.7
 ## 5. Enlaces
 - Issues de la semana: https://github.com/lizeth93993/rapidgo-demanda-zonas/milestone/1
 - PRs:
-  - #__ Estructura base (Issue #1)
+  - #20 Estructura base (Issue #1)
   - #18 KPIs y reglas de alerta (Issue #3)
-  - #__ docker-compose (Issue #5)
-  - #__ Contrato JSON (Issue #2)
-  - #__ ADR-001 Kafka (Issue #4)
-- Release: https://github.com/lizeth93993/rapidgo-demanda-zonas/releases/tag/v0.1.0-foundation
+  - #19 docker-compose (Issue #5)
+  - #21 Contrato JSON (Issue #2)
+  - #22 ADR-001 Kafka (Issue #4)
+  - #23 README y checkpoint (Issue #6)
+- Release: https://github.com/lizeth93993/rapidgo-demanda-zonas/releases/tag/v0.1.0foundation

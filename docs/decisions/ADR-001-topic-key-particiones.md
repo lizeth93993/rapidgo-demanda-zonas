@@ -1,8 +1,8 @@
 # ADR-001 - Topic, key y numero de particiones de Kafka
 
 - **Estado:** Aceptada (Semana 1, release v0.1.0-foundation)
-- **Issue:** #4 · **PR:** #_(completar)_
-- **Responsables:** Kevin Pena (autor), Lizeth Jimenez (revision)
+- **Issue:** #4 · **PR:** #22
+- **Responsables:** Santiago Peña (autor), Lizeth Jimenez (revision)
 
 ## Contexto / problema
 
