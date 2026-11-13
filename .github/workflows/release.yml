@@ -1,0 +1,90 @@
+name: Release RapidGo
+
+# Quality gate del release final (Issue #16): si algo falla, NO se publica.
+#   1. quality-gate   -> el mismo CI de cada PR (pruebas, DAG de Airflow, compose)
+#   2. documentacion  -> README y docs completos (validar_docs.py --estricto)
+#   3. publicar       -> empaqueta el codigo, crea el tag y el GitHub Release con el paquete
+# Se ejecuta a mano: Actions -> Release RapidGo -> Run workflow.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version a publicar (ej. v1.0.0)'
+        required: true
+        default: 'v1.0.0'
+      video:
+        description: 'Enlace al video final (opcional, se agrega a las notas)'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  quality-gate:
+    name: Quality gate (CI completo)
+    uses: ./.github/workflows/ci.yml
+
+  documentacion:
+    name: Documentacion completa
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+      - name: README, ADR y checkpoints sin pendientes
+        run: python scripts/validar_docs.py --estricto
+
+  publicar:
+    name: Empaquetar y publicar
+    needs: [quality-gate, documentacion]
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ inputs.version }}
+      VIDEO: ${{ inputs.video }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Validar la version
+        run: |
+          if ! [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::La version debe tener la forma vX.Y.Z (recibido: $VERSION)"; exit 1
+          fi
+          if git rev-parse -q --verify "refs/tags/$VERSION" >/dev/null; then
+            echo "::error::El tag $VERSION ya existe"; exit 1
+          fi
+
+      - name: Empaquetar el codigo
+        run: |
+          mkdir dist
+          git archive --format=zip --prefix="rapidgo-demanda-zonas-$VERSION/" -o "dist/rapidgo-demanda-zonas-$VERSION.zip" HEAD
+          (cd dist && sha256sum ./*.zip > SHA256SUMS.txt && cat SHA256SUMS.txt)
+
+      - name: Escribir las notas del release
+        run: |
+          {
+            echo "## RapidGo · Variante 5: Demanda por zonas · $VERSION"
+            echo
+            echo "Pipeline Kafka -> Spark Structured Streaming -> Data Lake -> Airflow para detectar picos de pedidos por zona que afectan la disponibilidad de repartidores."
+            echo
+            echo "- Quality gate superado: CI completo (pruebas, importacion del DAG, docker compose) y documentacion sin pendientes."
+            echo "- Paquete del codigo adjunto con su suma SHA-256."
+            if [ -n "$VIDEO" ]; then echo "- Video final: $VIDEO"; fi
+            echo
+            echo "Releases anteriores: v0.1.0foundation, v0.2.0-streaming, v0.3.0-orchestration."
+            echo
+            gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" -f tag_name="$VERSION" -f target_commitish="$GITHUB_SHA" --jq .body
+          } > notas.md
+          cat notas.md
+
+      - name: Crear el tag y el GitHub Release
+        run: |
+          gh release create "$VERSION" dist/* \
+            --target "$GITHUB_SHA" \
+            --title "$VERSION · Integracion, quality gate y release final" \
+            --notes-file notas.md

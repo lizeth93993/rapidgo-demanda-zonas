@@ -6,6 +6,7 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+  workflow_call:          # release.yml lo reutiliza como quality gate antes de publicar (Issue #16)
 
 jobs:
   validar:
@@ -34,6 +35,9 @@ jobs:
 
       - name: Validar Docker Compose
         run: docker compose config --quiet
+
+      - name: Revisar documentacion (aviso; en el release es obligatoria)
+        run: python scripts/validar_docs.py
 
   validar-dag:
     name: Validar DAG de Airflow
